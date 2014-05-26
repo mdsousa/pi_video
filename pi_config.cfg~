@@ -1,0 +1,5 @@
+server=10.42.0.1
+stream_port=5001
+listen_port=5003
+
+stream_write_length=60
