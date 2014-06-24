@@ -116,7 +116,6 @@ class listenNetworkThread(threading.Thread):
         global listeForCmdThread
         global cmd_client_socket
         while True:
-#            print("attempt to listen to ip: %s, port: %d" % (self.server, self.cmd_port1))
             try:
 #                cmd_client_socket1 = socket.socket()
 #                cmd_client_socket1.connect( (self.server, self.cmd_port) )
