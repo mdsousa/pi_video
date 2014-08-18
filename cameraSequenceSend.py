@@ -1,4 +1,6 @@
+
 import socket   #for sockets
+import serial # for serial comm
 import threading
 import configparser # read config file
 import traceback
@@ -10,6 +12,10 @@ import io
 import time
 import picamera
 import struct
+import queue
+
+import gps_read
+
 
 server = None
 cmd_client_socket1 = None
@@ -22,6 +28,7 @@ cmd_port2 = None
 stream_client_socket2 = None
 stream_connection2 = None
 stream_port2 = None
+serial_port = None
 
 stream_write_length = None # how long stream should be saved to disk, in seconds
 
@@ -31,7 +38,9 @@ listenForCmdThread = None
 doneSending = False
 
 def signal_handler(signal, frame):
-    print("\nCtrl-C pressed")
+    print("\ncameraSequenceSend::Ctrl-C pressed")
+    listening = False
+    time.sleep(0.1)
     sys.exit(0)
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -40,6 +49,7 @@ def readConfig():
     global cmd_port1
     global stream_port1
     global stream_write_length
+    global serial_port
     try:
         parser = configparser.ConfigParser()
         parser.read('pi_config.ini')
@@ -47,6 +57,7 @@ def readConfig():
         cmd_port1 = int(parser['configuration']['cmd_port1'])
 #        print("listen_port: %s" % listen_port)
         stream_port1 = int(parser['configuration']['stream_port1'])
+        serial_port = int(parser['configuration']['serial_port'])
         stream_write_length = int(parser['camera']['stream_write_length'])
     except configparser.Error as e:
         print(e)
@@ -103,7 +114,7 @@ class listenForCmd(threading.Thread):
             self.socket.close()
         except:
             traceback.print_exc(file=sys.stdout)
-
+            cleanup()
 
 class listenNetworkThread(threading.Thread):
     def __init__(self, threadID, name, server, lport):
@@ -132,6 +143,9 @@ class listenNetworkThread(threading.Thread):
                 if e.errno == errno.ECONNREFUSED:
 #                    print('connection error: %s' % e)
                     pass
+            except:
+                traceback.print_exc(file=sys.stdout)
+                cleanup()
 
 # Prepare to send image data to remote server
 class streamNetworkThread(threading.Thread):
@@ -170,9 +184,11 @@ class streamNetworkThread(threading.Thread):
                     pass
                 elif e.errno == ECONNRESET:
                     print("streamNetworkThread, seems the server has hung up.")
+                    cleanup()
                 else:
                     print("streaming connection exception")
                     traceback.print_exc(file=sys.stdout)
+                    cleanup()
 
 def imageStreaming(sconnection):
 #    global stream_connection1
@@ -193,6 +209,7 @@ def imageStreaming(sconnection):
             start = time.time()
             cameraStream = io.BytesIO()
             camera.resolution = (1920,1080) # HD
+            camera.framerate = 5
             for foo in camera.capture_continuous(cameraStream, format='jpeg', use_video_port=True):
                 if( not doneSending ):
                     # Write the length of the capture to the stream and flush to
@@ -203,8 +220,8 @@ def imageStreaming(sconnection):
                     cameraStream.seek(0)
                     sconnection.write(cameraStream.read())
                     # If we've been capturing for more than 30 seconds, quit
-                    if time.time() - start > 30:
-                        break
+#                    if time.time() - start > 600:
+#                        break
                     # Reset the stream for the next capture
                     cameraStream.seek(0)
                     cameraStream.truncate()
@@ -235,15 +252,28 @@ def main():
     global stream_port1
     global stream_port2
     global listenForCmdThread
+    global serial_port
 #    anyInterface = '0.0.0.0'
     try:
         readConfig()
+
+        ### setup for the gps stuff ###
+        serialSocketQueue = queue.Queue(1)
+        openSerialSocketThread = threading.Thread(target=gps_read.openSocket, args=(server,serial_port,serialSocketQueue))
+        openSerialSocketThread.daemon = True
+        openSerialSocketThread.start()
+        s = serial.Serial("/dev/ttyAMA0", 57600)
+        gpsSocketThread = threading.Thread(target=gps_read.sendGPSData, args=(s, serialSocketQueue))
+        gpsSocketThread.daemon = True
+        gpsSocketThread.start()
+
         streamNetworkThread1 = streamNetworkThread(1, "stream network thread", server, stream_port1)
         streamNetworkThread1.daemon = True
         streamNetworkThread1.start()
         listenNetworkThread1 = listenNetworkThread(1, "listen network thread2", server, cmd_port1)
         listenNetworkThread1.daemon = True
         listenNetworkThread1.start()
+        
         while not listening:
             time.sleep(1)
         
@@ -252,6 +282,7 @@ def main():
     except Exception as e:
         traceback.print_exc()
     finally:
+        cleanup()
         print("Done")
 
 if __name__ == "__main__":
