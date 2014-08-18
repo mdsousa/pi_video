@@ -1,0 +1,11 @@
+import socket   #for sockets
+import configparser # read config file
+
+import io
+import time
+import picamera
+import struct
+
+config = configparserConfigParser()
+config.read("pi_config")
+print(parser['configuration'])
